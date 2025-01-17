@@ -1,205 +1,368 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Geometric Brownian Motion (GBM) Demo</title>
-  <!-- Include Plotly -->
+  <meta charset="UTF-8" />
+  <title>Geometric Brownian Motion Demo</title>
+  <!-- Load Plotly from CDN -->
   <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
   <style>
     body {
-      font-family: sans-serif;
+      font-family: Arial, sans-serif;
       margin: 20px;
     }
-
-    #controls {
-      margin-bottom: 20px;
+    .controls {
+      margin-bottom: 10px;
     }
-
-    .control {
-      margin: 10px 0;
-    }
-
-    label {
+    .slider-container {
       display: inline-block;
-      width: 120px;
+      margin-right: 20px;
     }
-
-    #chart {
+    .slider-container label {
+      display: block;
+      margin-bottom: 2px;
+    }
+    .slider-container input {
+      width: 150px;
+    }
+    #chartDiv, #histDiv {
       width: 90%;
-      max-width: 900px;
-      margin: auto;
+      max-width: 1000px;
+      margin: 0 auto 40px auto;
     }
-
-    /* Make sliders more visible on some browsers */
-    input[type=range] {
-      width: 300px;
+    button {
+      margin-left: 10px;
+      cursor: pointer;
+      padding: 5px 10px;
     }
   </style>
 </head>
 <body>
 
-<h1>Geometric Brownian Motion (GBM) Paths</h1>
-<p>This page simulates multiple GBM paths that all start at the same price. You can adjust parameters below.</p>
+<h1>Geometric brownian motion for math ia presentation</h1>
 
-<div id="controls">
-  <!-- Number of GBMs -->
-  <div class="control">
-    <label for="pathsSlider">Number of GBMs</label>
-    <input type="range" id="pathsSlider" min="1" max="200" value="10" />
-    <span id="pathsValue">10</span>
+<div class="controls">
+  <div class="slider-container">
+    <label for="pathsSlider">Number of Paths</label>
+    <input type="range" id="pathsSlider" min="1" max="200" value="50" />
+    <span id="pathsValue">50</span>
   </div>
-
-  <!-- Drift (mu) -->
-  <div class="control">
-    <label for="driftSlider">Drift (μ)</label>
-    <input type="range" id="driftSlider" min="-0.2" max="0.2" step="0.01" value="0.05" />
+  
+  <div class="slider-container">
+    <label for="driftSlider">Drift (\u03BC)</label>
+    <input type="range" id="driftSlider" min="-0.1" max="0.2" step="0.01" value="0.05" />
     <span id="driftValue">0.05</span>
   </div>
 
-  <!-- Volatility (sigma) -->
-  <div class="control">
-    <label for="volSlider">Volatility (σ)</label>
-    <input type="range" id="volSlider" min="0.0" max="0.5" step="0.01" value="0.2" />
+  <div class="slider-container">
+    <label for="volSlider">Volatility (\u03C3)</label>
+    <input type="range" id="volSlider" min="0.05" max="0.5" step="0.01" value="0.2" />
     <span id="volValue">0.20</span>
   </div>
 
-  <!-- Toggle log scale -->
-  <div class="control">
-    <button id="toggleScaleBtn">Use Log Scale</button>
+  <div class="slider-container">
+    <label for="timeSlider">Histogram Time Step</label>
+    <input type="range" id="timeSlider" min="0" max="100" step="1" value="100" />
+    <span id="timeValue">Final</span>
   </div>
+
+  <button id="scaleBtn">Toggle Scale: Linear</button>
 </div>
 
-<div id="chart"></div>
+<div id="chartDiv"></div>
+<div id="histDiv"></div>
 
 <script>
-/*
-  Generate multiple Geometric Brownian Motion paths.
+  // -------------
+  // Global config
+  // -------------
+  let S0        = 100;      // Initial price
+  let T         = 1.0;      // Total time (e.g., 1 year)
+  let nSteps    = 100;      // Number of time steps in the simulation
+  let dt        = T / nSteps;
+  let isLogScale = false;   // Tracks whether we are on log scale or not
 
-  S_{t+1} = S_t * exp( (mu - 0.5*sigma^2)*dt + sigma * sqrt(dt) * Z )
-  where Z ~ N(0,1).
-*/
+  // -------------
+  // DOM Elements
+  // -------------
+  const pathsSlider = document.getElementById('pathsSlider');
+  const pathsValue  = document.getElementById('pathsValue');
+  const driftSlider = document.getElementById('driftSlider');
+  const driftValue  = document.getElementById('driftValue');
+  const volSlider   = document.getElementById('volSlider');
+  const volValue    = document.getElementById('volValue');
+  const timeSlider  = document.getElementById('timeSlider');
+  const timeValue   = document.getElementById('timeValue');
+  const scaleBtn    = document.getElementById('scaleBtn');
 
-// Default parameters
-let S0        = 100;   // Initial stock price
-let T         = 1;     // Total time in years
-let steps     = 252;   // Number of time steps (e.g. trading days in a year)
-let dt        = T / steps;
-let numPaths  = 10;
-let mu        = 0.05;
-let sigma     = 0.2;
-let yScale    = 'linear'; // or 'log'
-
-// Elements
-const pathsSlider   = document.getElementById('pathsSlider');
-const pathsValue    = document.getElementById('pathsValue');
-const driftSlider   = document.getElementById('driftSlider');
-const driftValue    = document.getElementById('driftValue');
-const volSlider     = document.getElementById('volSlider');
-const volValue      = document.getElementById('volValue');
-const toggleScaleBtn= document.getElementById('toggleScaleBtn');
-
-// Update displayed slider values
-pathsValue.textContent = pathsSlider.value;
-driftValue.textContent = driftSlider.value;
-volValue.textContent   = volSlider.value;
-
-/**
- * Simulate `count` GBM paths.
- */
-function simulateGBM(count, mu, sigma) {
-  let data = [];
-  for (let i = 0; i < count; i++) {
-    let S = S0;
-    let traceX = [];
-    let traceY = [];
-
-    for (let stepIndex = 0; stepIndex <= steps; stepIndex++) {
-      traceX.push(stepIndex);
-      traceY.push(S);
-      // Next step
-      let Z = gaussianRandom(); // standard normal
-      S = S * Math.exp((mu - 0.5 * sigma * sigma) * dt + sigma * Math.sqrt(dt) * Z);
+  // Update text next to sliders
+  pathsSlider.oninput = () => {
+    pathsValue.textContent = pathsSlider.value;
+    updatePlot();
+  };
+  driftSlider.oninput = () => {
+    driftValue.textContent = parseFloat(driftSlider.value).toFixed(2);
+    updatePlot();
+  };
+  volSlider.oninput = () => {
+    volValue.textContent = parseFloat(volSlider.value).toFixed(2);
+    updatePlot();
+  };
+  timeSlider.oninput = () => {
+    if (timeSlider.value == nSteps) {
+      timeValue.textContent = 'Final';
+    } else {
+      timeValue.textContent = timeSlider.value;
     }
-
-    data.push({
-      x: traceX,
-      y: traceY,
-      mode: 'lines',
-      line: { width: 1 },
-      name: 'Path ' + (i + 1),
-      showlegend: false
-    });
-  }
-  return data;
-}
-
-/**
- * Plot or re-plot the chart.
- */
-function plotGBM() {
-  numPaths = Number(pathsSlider.value);
-  mu       = Number(driftSlider.value);
-  sigma    = Number(volSlider.value);
-
-  let traces = simulateGBM(numPaths, mu, sigma);
-
-  let layout = {
-    title: 'Geometric Brownian Motion Paths',
-    xaxis: {
-      title: 'Time Step'
-    },
-    yaxis: {
-      title: 'Price',
-      type: yScale
-    }
+    updatePlot();
   };
 
-  Plotly.newPlot('chart', traces, layout);
-}
+  // Toggle scale button
+  scaleBtn.onclick = () => {
+    isLogScale = !isLogScale;
+    scaleBtn.textContent = isLogScale ? 'Toggle Scale: Log' : 'Toggle Scale: Linear';
+    updatePlot();
+  };
 
-/**
- * Toggle scale between linear and log.
- */
-function toggleScale() {
-  yScale = (yScale === 'linear') ? 'log' : 'linear';
-  toggleScaleBtn.textContent = (yScale === 'linear') 
-    ? 'Use Log Scale'
-    : 'Use Linear Scale';
-  plotGBM();
-}
+  // ----------------------------------
+  // Function to simulate GBM paths
+  // ----------------------------------
+  function simulateGBM(nPaths, mu, sigma) {
+    // Returns a 2D array of shape (nPaths x (nSteps+1)) for prices
+    // We model S(t+dt) = S(t)*exp((mu - sigma^2/2)*dt + sigma*sqrt(dt)*Z)
 
-/**
- * Returns a random number ~ N(0,1).
- */
-function gaussianRandom() {
-  // Using the Box-Muller transform
-  let u = 0, v = 0;
-  while (u === 0) u = Math.random(); // Converting [0,1) to (0,1)
-  while (v === 0) v = Math.random();
-  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
-}
+    let paths = [];
+    for (let p = 0; p < nPaths; p++) {
+      let path = new Array(nSteps + 1);
+      path[0] = S0;
+      for (let i = 1; i <= nSteps; i++) {
+        let Z = randn(); // standard normal
+        let growth = (mu - 0.5 * sigma * sigma) * dt + sigma * Math.sqrt(dt) * Z;
+        path[i] = path[i - 1] * Math.exp(growth);
+      }
+      paths.push(path);
+    }
+    return paths;
+  }
 
-// Event listeners for sliders
-pathsSlider.addEventListener('input', function() {
-  pathsValue.textContent = pathsSlider.value;
-  plotGBM();
-});
+  // ----------------------------------
+  // Utility: generate random N(0,1)
+  // ----------------------------------
+  // Box-Muller transform
+  function randn() {
+    let u = 1 - Math.random(); // [0,1) -> (0,1]
+    let v = Math.random();
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+  }
 
-driftSlider.addEventListener('input', function() {
-  driftValue.textContent = driftSlider.value;
-  plotGBM();
-});
+  // ---------------------------------------------------------
+  // Compute and return a PDF trace overlay for the histogram
+  // ---------------------------------------------------------
+  function makeDistributionTrace(data, mu, sigma, timeIndex) {
+    // data: array of stock prices at the chosen time step
+    // mu, sigma: drift and volatility
+    // timeIndex: which step we are looking at (0..nSteps)
+    // isLogScale: determines normal (log(S)) or lognormal overlay
 
-volSlider.addEventListener('input', function() {
-  volValue.textContent = volSlider.value;
-  plotGBM();
-});
+    // First find min/max of the data for x-range
+    let minVal = Math.min(...data);
+    let maxVal = Math.max(...data);
 
-// Button to toggle scale
-toggleScaleBtn.addEventListener('click', toggleScale);
+    // If all same (edge case), just spread out a bit
+    if (minVal === maxVal) {
+      minVal = 0.9 * minVal;
+      maxVal = 1.1 * maxVal;
+    }
+    // We'll define x range for PDF
+    let xVals = [];
+    let nPoints = 200;
+    for (let i = 0; i < nPoints; i++) {
+      xVals.push(minVal + (maxVal - minVal) * (i / (nPoints - 1)));
+    }
 
-// Initial plot
-plotGBM();
+    // Theoretical distribution parameters for GBM at time t
+    let t = dt * timeIndex;
+    // ln(S(t)) ~ Normal( ln(S0) + (mu - sigma^2/2)*t, sigma^2 * t )
+    let meanLog = Math.log(S0) + (mu - 0.5 * sigma * sigma) * t;
+    let varLog  = sigma * Math.sqrt(t);
+
+    // We'll compute either:
+    // 1) lognormal PDF if linear scale
+    // 2) normal PDF of ln(S) if log scale
+
+    let pdfVals = [];
+    if (!isLogScale) {
+      // Lognormal PDF: f(x) = (1/(x*sqrt(2*pi)*varLog)) * exp( - ( ln(x) - meanLog )^2 / (2 * varLog^2 ) )
+      // for x > 0
+      for (let x of xVals) {
+        if (x <= 0) {
+          pdfVals.push(0);
+        } else {
+          let logX = Math.log(x);
+          let z    = (logX - meanLog) / varLog;
+          let pdf  = (1.0 / (x * varLog * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * z * z);
+          pdfVals.push(pdf);
+        }
+      }
+    } else {
+      // Normal PDF on ln(S), i.e. distribution of ln(S(t))
+      // Let Y = ln(S). Then Y ~ Normal(meanLog, varLog^2).
+      // We'll interpret xVals as ln(S) domain in log scale. Actually if we want to overlay
+      // a normal distribution for ln(S), we should transform xVals -> ln(xVals).
+      // But typically, if the main chart is log scale, the data is on the scale of S, but
+      // visually we see log(S). We'll do a simplistic approach: compute PDF in terms of x=ln(S).
+      // This can be visually misleading if we just overlay on the same axis. 
+      // For demonstration, let's treat xVals as stock prices and convert them to ln(S).
+      for (let x of xVals) {
+        if (x <= 0) {
+          pdfVals.push(0);
+        } else {
+          let logX = Math.log(x);
+          let z    = (logX - meanLog) / varLog;
+          // We want the normal pdf in terms of logX
+          let pdf  = (1.0 / (varLog * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * z * z);
+          // However, if we try to overlay this onto the histogram of S, we must account for d(ln(S))/dS = 1/S
+          // The log-scale distribution in terms of S is: f_S(s) = f_Y(ln(s)) * 1/s
+          // so we multiply by 1/x
+          pdf = pdf / x;
+          pdfVals.push(pdf);
+        }
+      }
+    }
+
+    // We now want to scale the PDF for display with the histogram so that the peak roughly lines up.
+    // A common approach is to scale so that area under PDF ~ area under histogram.
+    // Let's do a simpler approach: scale by a constant so that the max of the PDF matches the max of histogram.
+    let histYmax = getHistogramMaxY(data);
+    let pdfMax   = Math.max(...pdfVals);
+    let scaleFactor = (pdfMax > 0) ? (histYmax / pdfMax) : 1.0;
+    pdfVals = pdfVals.map(v => v * scaleFactor);
+
+    return {
+      x: xVals,
+      y: pdfVals,
+      mode: 'lines',
+      name: (!isLogScale ? 'Lognormal PDF' : 'Normal PDF (of ln(S))'),
+      line: { color: 'rgba(255,0,0,0.7)', width: 2 },
+      yaxis: 'y'
+    };
+  }
+
+  // -------------------------------------------------------------
+  // Helper to estimate the histogram's maximum Y for scaling PDF
+  // -------------------------------------------------------------
+  function getHistogramMaxY(data) {
+    // We'll do a simple approach: make a quick histogram with ~30 bins, find the maximum count
+    let nBins = 30;
+    let minVal = Math.min(...data);
+    let maxVal = Math.max(...data);
+    if (minVal === maxVal) {
+      return data.length; // everything is the same value
+    }
+    let binWidth = (maxVal - minVal) / nBins;
+    let bins = new Array(nBins).fill(0);
+    for (let d of data) {
+      let idx = Math.floor((d - minVal) / binWidth);
+      if (idx >= 0 && idx < nBins) {
+        bins[idx]++;
+      } else if (idx === nBins) {
+        // in case d == maxVal
+        bins[nBins - 1]++;
+      }
+    }
+    return Math.max(...bins);
+  }
+
+  // ---------------------------------------
+  // Update plots (called whenever sliders change)
+  // ---------------------------------------
+  function updatePlot() {
+    let nPaths = parseInt(pathsSlider.value);
+    let mu     = parseFloat(driftSlider.value);
+    let sigma  = parseFloat(volSlider.value);
+    let chosenTime = parseInt(timeSlider.value);
+
+    let allPaths = simulateGBM(nPaths, mu, sigma);
+
+    // times array for the x-axis
+    let tAxis = [];
+    for (let i = 0; i <= nSteps; i++) {
+      tAxis.push(i * dt);
+    }
+
+    // Create line traces for each path
+    let pathTraces = [];
+    for (let p = 0; p < nPaths; p++) {
+      let trace = {
+        x: tAxis,
+        y: allPaths[p],
+        mode: 'lines',
+        type: 'scatter',
+        line: { width: 1 },
+        hoverinfo: 'none',
+        showlegend: false
+      };
+      pathTraces.push(trace);
+    }
+
+    // Layout for main chart
+    let chartLayout = {
+      title: 'GBM Paths',
+      xaxis: { title: 'Time (years)' },
+      yaxis: {
+        title: 'Price',
+        type: isLogScale ? 'log' : 'linear',
+        autorange: true
+      },
+      showlegend: false,
+      margin: { t: 50 }
+    };
+
+    // Draw or re-draw the main chart
+    Plotly.newPlot('chartDiv', pathTraces, chartLayout);
+
+    // Now build the histogram at the chosen time step
+    // If chosenTime == nSteps => final, else that index
+    let finalIndex = (chosenTime < 0 || chosenTime > nSteps) ? nSteps : chosenTime;
+    let sliceData = [];
+    for (let p = 0; p < nPaths; p++) {
+      sliceData.push(allPaths[p][finalIndex]);
+    }
+
+    // Create histogram trace
+    let histTrace = {
+      x: sliceData,
+      type: 'histogram',
+      opacity: 0.7,
+      marker: {
+        color: 'rgba(100, 150, 200, 0.7)'
+      },
+      name: 'Histogram'
+    };
+
+    // Create PDF trace
+    let distTrace = makeDistributionTrace(sliceData, mu, sigma, finalIndex);
+
+    // Layout for the histogram figure
+    let histLayout = {
+      title: `Distribution at Time = ${(finalIndex * dt).toFixed(2)}`,
+      xaxis: {
+        title: 'Price',
+        type: (isLogScale ? 'log' : 'linear'),
+        autorange: true
+      },
+      yaxis: { title: 'Count' },
+      barmode: 'overlay',
+      showlegend: true,
+      margin: { t: 50 }
+    };
+
+    // Plot the histogram and overlay distribution
+    Plotly.newPlot('histDiv', [histTrace, distTrace], histLayout);
+  }
+
+  // Initial plot on page load
+  updatePlot();
 </script>
+
 </body>
 </html>
